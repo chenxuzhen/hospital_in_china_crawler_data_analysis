@@ -1,0 +1,580 @@
+import requests
+import os
+os.environ['PROJ_LIB'] = r'C:\Users\xuzhen\.conda\pkgs\proj4-5.2.0-ha925a31_1\Library\share'
+#from mpl_toolkits.basemap import Basemap
+import requests
+import json
+import openpyxl
+import time
+# from pyecharts.charts import Map
+# from pyecharts.charts import Geo
+# from pyecharts.charts import WordCloud
+# import pyecharts.options as opts
+# from pyecharts.globals import ChartType, SymbolType, ThemeType
+# from pyecharts.datasets import COORDINATES
+from pyecharts import options as opts
+from pyecharts.charts import Page, PictorialBar, Bar, Tab, Pie, Line
+from pyecharts.globals import SymbolType
+
+import pandas as pd
+from sqlalchemy import create_engine
+import pymysql
+import requests,re
+import time
+import random
+import json
+import os
+import xmltodict
+from xml.parsers.expat import ExpatError
+from pyecharts.charts import *
+from pyecharts.charts import Bar
+from pyecharts import options as opts
+from pyecharts.commons.utils import JsCode
+from pyecharts.globals import ThemeType, ChartType
+from pyecharts.datasets.coordinates import get_coordinate, search_coordinates_by_keyword
+from pyecharts.components import Image
+from pyecharts.options import ComponentTitleOpts
+#['hospital', 'provinces', 'cities', 'location', 'phone']
+def generate_mysql():
+    conn = pymysql.connect(
+        host='localhost',
+        user='root',
+        password='mysqlpsswd',
+        port=3306,
+        charset = 'UTF8MB4',  
+        db = 'hospital_list')
+    cursor = conn.cursor()
+
+    sql = 'CREATE TABLE IF NOT EXISTS hospital_coord (hospital VARCHAR(30),\
+    provinces VARCHAR(15), cities VARCHAR(15), location VARCHAR(30) ,phone VARCHAR(30), PRIMARY KEY (hospital))'
+    # hospital_list是要在数据库中建立的表，用于存放数据
+    
+    cursor.execute(sql)
+    conn.close()
+
+#定义xml转json的函数
+def xmltojson(xmlstr):
+    #parse是的xml解析器
+    xmlparse = xmltodict.parse(xmlstr)
+    #json库dumps()是将dict转化成json格式，loads()是将json转化成dict格式。
+    #dumps()方法的ident=1，格式化json
+    jsonstr = json.dumps(xmlparse,indent=1)
+    return jsonstr
+    #print(jsonstr)
+# hospital[i], provinces[i], cities[i], location[i], phone[i]
+def __get_location1__(hospital, provinces, cities, location_list, address, phone):  
+        my_ak = '6CHxTRvf920MDx8siBFAjKxcxFA19hVl'    # 需要自己填写自己的AK
+#        print(location_list)
+        headers = {
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Accept-Language": "zh-CN,zh;q=0.8",
+            "Cache-Control": "max-age=0",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/59.0.3071.86 Safari/537.36"
+        }
+        try:
+            url = 'http://api.map.baidu.com/geocoder?address=' + location_list +'output=json&key=' + my_ak
+            print(url)
+            response = requests.get(url, headers = headers , timeout = 15)
+            txt = response.text
+#            print(txt)
+            print('\n')
+            res_json = txt[42:]
+            res_json_ = xmltojson(res_json)
+            print(res_json_)
+            json_dict = json.loads(res_json_)
+#            print(type(json_dict))
+            print(json_dict)
+            lat = json_dict['GeocoderSearchResponse']['result']['location']['lat']
+            lng = json_dict['GeocoderSearchResponse']['result']['location']['lng']
+            print(lat, lng)
+#            xml_dict = xmltodict.parse(res_json)
+            return hospital, provinces, cities, lat, lng, address, phone      
+            
+        except ExpatError as e:
+            print('location {} {} not found. BaiduMap is lost!'.format(cities, location_list))
+            print(e)
+            #print(response.status_code)
+            print(time.strftime('%Y-%m-%d %H:%M:%S'))
+#            time.sleep(random.random()*2)
+            return 0,0
+
+def read_mysql(db):
+    Engine = create_engine('mysql+pymysql://root:mysqlpswd@localhost:3306/{0}?charset=UTF8MB4'.format(db))
+    con = Engine.connect()
+    #提取hospital_name_new, Provinces, Cities, address, phone
+    df = pd.read_sql("""SELECT hospital_name_new, Provinces, Cities, address, phone
+    FROM top_tier3_hospital ORDER BY Cities ASC """, con)
+    df_population = pd.read_sql("""SELECT  province, city, class, total_population, admin_population, urban_population,\
+    report_time FROM cities_population ORDER BY city ASC""")
+#    print(type(df['Cities', 'address']))
+#    print(df['address'])
+    for m in range(0, len(df[ 'address'])):
+        df[ 'address'][m] = str(df[ 'address'][m]).split()[0]
+        if(len(str(df[ 'address'][m]).split()) > 1):
+            print(df[ 'address'])
+    
+    return df['hospital_name_new'], df['Provinces'], df['Cities'], df[ 'address'], df['phone']
+    con.close()
+#hospital, provinces, cities, location, address, phone         
+def write_to_sql(data_frame, db = 'hospital_list'):
+    engine = create_engine('mysql+pymysql://root:root@cxzsql@localhost:3306/{0}?charset=UTF8MB4'.format(db))
+    try:
+        # df = pd.read_csv(df)
+        data_frame.to_sql('hospital_coord',con = engine,if_exists='append',index=False)
+        # append表示在原有表基础上增加，但该表要有表头(header)
+    except Exception as e:
+        print(e)       
+      
+
+def geo_charts(df):
+    #导入自定义的地点经纬度
+    df['lat'].astype(float)
+    df['lng'].astype(float)
+    #    删除之前产生的坐标(0, 0)
+    df = df[df.lat.notnull()]
+    # https://brohrer.github.io/dataframe_indexing.html 
+    geo_cities_coords={df.iloc[i]['hospital']:[float(df.iloc[i]['lng']), float(df.iloc[i]['lat'])] for i in range(len(df))} #根据文件大小生成经纬度字典
+    #    print(geo_cities_coords)
+    # 如果inplace=True,那么'hospital'这个列就没了，变成了index。False意味着这列还存在，也是index
+    df.set_index('hospital', inplace=False)
+    print(df.columns)
+    df.drop_duplicates(inplace=True)
+#    print(df)
+#     df2_json_file = df.to_json(orient="index",force_ascii=False)
+#    print(json_file)
+
+#     filewriter = open('C:/Users/xuzhen/hospital_list/json_file', 'w', 'utf-8')
+#     for x in range(0, len(df2_json_file)):
+#         filewriter.write(df2_json_file[x])
+#     filewriter.close()
+#    json_obj = json.dumps(geo_cities_coords)
+    with open('C:/Users/xuzhen/hospital_list/json_file.json', 'w', encoding='utf-8') as output_file:
+        output_file.write(json.dumps(geo_cities_coords, ensure_ascii=False))
+    list_hos = list(df['hospital'])
+    list_coord = []
+
+#    print(df)
+    dummy_ = []
+    for x in range(0,len(df)):
+
+        temp =  list(df['lng'].astype(float))[x], list(df['lat'].astype(float))[x]
+        list_coord.append(temp)
+        disp =  list(df['address'])[x], list(df['phone'])[x]
+        dummy_.append(disp)
+#    print(list_coord)
+    
+    geo_pair = list(zip(list_hos, dummy_))
+#    print(geo_pair)
+# 各个市医院地理坐标图（地址，电话）
+    def geo_base() -> Geo:  # 函数注释
+        try:
+            area_geo = (
+                Geo(init_opts=opts.InitOpts(theme=ThemeType.WESTEROS, bg_color='transparent'), is_ignore_nonexistent_coord=True)
+                    .add_schema(maptype="china", zoom=1.2, center=[105, 35])
+                    .add_coordinate_json(json_file = 'C:/Users/xuzhen/hospital_list/json_file.json')
+                    .add("",geo_pair  , symbol_size=6, type_=ChartType.EFFECT_SCATTER, effect_opts=opts.EffectOpts(is_show=True, color="black",
+                                                                                     symbol_size=10, scale=3, period=1))
+                    .set_series_opts(label_opts=opts.LabelOpts(is_show=False))
+                    .set_global_opts(
+                    visualmap_opts=opts.VisualMapOpts(orient='horizontal', is_calculable=True,pos_bottom=0),
+                    title_opts=opts.TitleOpts(title="麻麻再也不用担心我感冒找不到三甲医院了！", pos_top='5%'),
+                    legend_opts=opts.LegendOpts(pos_bottom='5%', pos_left=0)))
+            return(area_geo)
+        except TypeError as e:
+            print(e)
+    geo_base().render_notebook()
+    geo_base().render('C:/Users/xuzhen/hospital_list/geomap.html')
+# 各个市医院地理坐标热力图（各市三甲医院个数越高热力越高）
+    list_city = list(df_count_c['cities'])
+    list_city_count_c = list(df_count_c['count_c'])
+    geo_heat_pair = list(zip(list_city, list_city_count_c))
+
+    top_list_city = list(df_count_c['cities'].head(10))
+    top_list_city_count_c = list(df_count_c['count_c'].head(10))
+    top_geo_heat_pair = list(zip(list_city, list_city_count_c))
+    print(geo_heat_pair)
+    def geo_heat() -> Geo:  # 函数注释
+        try:
+            area_geo = (
+                Geo(init_opts=opts.InitOpts(theme=ThemeType.WESTEROS, bg_color='transparent'), is_ignore_nonexistent_coord=True)
+                    .add_schema(maptype="china", zoom=1.2, center=[105, 35])
+#                    .add_coordinate_json(json_file = 'C:/Users/xuzhen/hospital_list/json_file.json')
+                    .add("Avg_City",geo_heat_pair  , symbol_size=6, type_=ChartType.EFFECT_SCATTER, effect_opts=opts.EffectOpts(is_show=True, color="black",
+                                                                                     symbol_size=10, scale=3, period=1))
+                    .add("Rich_City", top_geo_heat_pair, type_=ChartType.HEATMAP)
+                    .set_series_opts(label_opts=opts.LabelOpts(is_show=False))
+                    .set_global_opts(
+                    visualmap_opts=opts.VisualMapOpts(orient='horizontal', is_calculable=True,pos_bottom=0),
+                    title_opts=opts.TitleOpts(title="医疗资源的发展可不是一朝一夕的事情,老区医疗依旧领先(表扬下黑辽,湖北尚需努力！)", pos_top='5%'),
+                    legend_opts=opts.LegendOpts(pos_bottom='5%', pos_left=0)))
+            return(area_geo)
+        except TypeError as e:
+            print(e)
+    print(type(geo_heat()))
+    geo_heat().render_notebook()
+    geo_heat().render('C:/Users/xuzhen/hospital_list/geoheat.html')
+# 各个市医院词云图（医院越多字体越大）
+    print('data insection for wordcloud:')
+    print(geo_heat_pair)
+    def word_wc() -> WordCloud:
+        wc = (
+            WordCloud()
+                .add("Which city has top medical facilities?", geo_heat_pair,
+                     word_gap=0, word_size_range=[10, 30]))
+        return wc
+    print(type(word_wc()))
+    word_wc().render_notebook()
+    word_wc().render('C:/Users/xuzhen/hospital_list/city_WC.html')
+    merged_data.sort_values(by=['count_p', 'ppl_per_hospital'], ascending=False, inplace=True)
+    list_prov = list(merged_data['provinces'])
+    list_num = list(merged_data['count_p'])
+    list_ppl = list(merged_data['ppl_per_hospital'])
+# 各省区医院分布图（MAP）
+    def amap() -> Map:
+        area_map = (
+        Map(init_opts=opts.InitOpts(theme=ThemeType.WESTEROS))
+            .add("", [list(z) for z in zip(list_prov, list_num)], "china",
+                 is_map_symbol_show=False, label_opts=opts.LabelOpts(color="#fff"),
+                 tooltip_opts=opts.TooltipOpts(is_show=True), zoom=1.2, center=[105, 35])
+            .set_series_opts(label_opts=opts.LabelOpts(is_show=False))
+            .set_global_opts(title_opts=opts.TitleOpts(title="China Tier3 Hospital Distribution", pos_top='5%',
+                                                       title_textstyle_opts=opts.TextStyleOpts(color="#FF0000")),
+                             visualmap_opts=opts.VisualMapOpts(is_piecewise=True, pos_right=0, pos_bottom=0,
+                                                               textstyle_opts=opts.TextStyleOpts(color="#F5FFFA"),
+                                                               pieces=[
+                                                                   {"min": 40, "label": '>39', "color": "#893448"},
+                                                                   {"min": 30, "max": 39, "label": '30-39',
+                                                                    "color": "#ff585e"},
+                                                                   {"min": 20, "max": 29, "label": '20-29',
+                                                                    "color": "#fb8146"},
+                                                                   {"min": 10, "max": 19, "label": '10-19',
+                                                                    "color": "#ffb248"},
+                                                                   {"min": 0, "max": 9, "label": '0-9',
+                                                                    "color": "#fff2d1"}])))
+        return(area_map)
+    amap().render_notebook()
+    amap().render('C:/Users/xuzhen/hospital_list/province_amap.html')
+
+# 各省区医院分布图 (PictorialBar-自定义 Symbol)
+    with open(os.path.join("C:/Users/xuzhen/env/pyecharts/Lib/site-packages/example/fixtures", "symbol.json"), "r", encoding="utf-8") as f:
+        symbols = json.load(f)
+    print(list_prov, list_num)
+    def pictorialbar_custom_symbol() -> PictorialBar:
+        pc = (
+            PictorialBar()
+            .add_xaxis(list_prov)
+            .add_yaxis(
+                "Num of Tier3 Hospitals",
+                list_num,
+                label_opts=opts.LabelOpts(is_show=False),
+                symbol_size=12,
+                symbol_repeat="fixed",
+                symbol_offset=[0, -2],
+                is_symbol_clip=True,
+                symbol=symbols["car"],
+            )
+            .reversal_axis()
+            .set_global_opts(
+                title_opts=opts.TitleOpts(title="Num of Tier3 Hospitals by Province"),
+                xaxis_opts=opts.AxisOpts(is_show=False),
+                yaxis_opts=opts.AxisOpts(
+                    axistick_opts=opts.AxisTickOpts(is_show=False),
+                    axisline_opts=opts.AxisLineOpts(
+                        linestyle_opts=opts.LineStyleOpts(opacity=0)
+                    ),
+                ),
+            )
+        )
+        return pc
+    pictorialbar_custom_symbol().render_notebook()
+    pictorialbar_custom_symbol().render('C:/Users/xuzhen/hospital_list/province_amap_pictorial_bar_symbols.html')
+# 各省区医院分布图  (Overlap-bar+line（双 Y 轴）-医院总数和人均医院资源)
+    def overlap_bar_line() -> Bar:
+        bar = (
+            Bar()
+            .add_xaxis(list_prov)
+            .add_yaxis("tier3_num_by_province", list_num)
+            .extend_axis(
+                yaxis=opts.AxisOpts(
+                    axislabel_opts=opts.LabelOpts(formatter="{value} ppl"), interval=500000
+                )
+            )
+            .set_series_opts(label_opts=opts.LabelOpts(is_show=True))
+            .set_global_opts(
+                title_opts=opts.TitleOpts(title="Bar(No. of Hospital by Province)+Line(No. of People to Share One Hospital)"),
+                yaxis_opts=opts.AxisOpts(
+                    axislabel_opts=opts.LabelOpts(formatter="{value} Hospital"), interval=20
+                ),
+                legend_opts=opts.LegendOpts(pos_bottom='90%', pos_left=0)
+            )
+        )
+
+        line = Line().add_xaxis(list_prov).add_yaxis("No. of People to Share One Hospital", list_ppl, yaxis_index=1)
+        bar.overlap(line)
+        return bar
+    overlap_bar_line().render_notebook()
+    overlap_bar_line().render('C:/Users/xuzhen/hospital_list/province_bar_overlap.html')
+
+# 各省区医院分布热力图(HEATMAP)
+
+    def bmap_heatmap() -> BMap:
+        Bmap = (
+            BMap()
+            .add_schema(baidu_ak='7asezk7zWsDx4BRHZPjWCnz43hmgmhtQ', center=[120.13066322374, 30.240018034923], is_roam = True,)
+            .add(
+                "bmap-Num of Hospitals by Province",
+                [list(z) for z in zip(list_prov, list_num)],
+                type_="heatmap",
+                label_opts=opts.LabelOpts(formatter="{b}"),
+            )
+            .set_global_opts(
+                title_opts=opts.TitleOpts(title="武汉:哥不仅是夏天热,额的医疗支援指数也很热!不信看看陈绪振的百度热力图"),
+                visualmap_opts=opts.VisualMapOpts(),
+            )
+        )
+        return(Bmap)
+    bmap_heatmap().render_notebook()
+    bmap_heatmap().render('C:/Users/xuzhen/hospital_list/province_Bmap.html')
+    
+# 各省区医院分布（Map3D-Bar3D）
+
+# 各省区三甲医院总数排名(BAR)
+    def bar_base() -> Bar:
+        bar = (
+        Bar(init_opts=opts.InitOpts(theme=ThemeType.CHALK, bg_color="transparent"))
+            .add_xaxis(list_prov)
+            .add_yaxis("Num of Hospitals by Province  ", list_num)
+            .extend_axis(yaxis=opts.AxisOpts(axislabel_opts=opts.LabelOpts(formatter="{value}")))
+            .set_series_opts(label_opts=opts.LabelOpts(is_show=False))
+            .set_global_opts(title_opts=opts.TitleOpts(title="我黑稳居第六,辛苦冰城老大哥在硬挺着了!"),
+                             legend_opts=opts.LegendOpts(pos_left='center'),
+                             yaxis_opts=opts.AxisOpts(axislabel_opts=opts.LabelOpts(formatter="{value}")),
+                             datazoom_opts=opts.DataZoomOpts()))
+        return bar
+    bar_base().render_notebook()
+    bar_base().render('C:/Users/xuzhen/hospital_list/bar_base.html')    
+
+
+
+# 各省区人均医院资源排名(BAR)
+    def bar_base_per_capita() -> Bar:
+        bar = (
+        Bar(init_opts=opts.InitOpts(theme=ThemeType.CHALK, bg_color="transparent"))
+            .add_xaxis(list_prov)
+            .add_yaxis("Num of Hospitals by Province  ", list_num)
+            .add_yaxis("Num of People to Share One Hospital ", list_ppl)
+            .extend_axis(yaxis=opts.AxisOpts(axislabel_opts=opts.LabelOpts(formatter="{value}"), interval=500000))
+
+            .set_series_opts(label_opts=opts.LabelOpts(is_show=True),
+                              itemstyle_opts={
+                "normal": {
+                "color": JsCode("""new echarts.graphic.LinearGradient(0, 0, 0, 1, [{
+                    offset: 0,
+                    color: 'rgba(0, 244, 255, 1)'
+                }, {
+                    offset: 1,
+                    color: 'rgba(0, 77, 167, 1)'
+                }], false)"""),
+                "barBorderRadius": [30, 30, 30, 30],
+                "shadowColor": 'rgb(0, 160, 221)',
+            }})
+            .set_global_opts(title_opts=opts.TitleOpts(title="天津：自个乐呵乐呵得了，总数高有个屁用，俺人均医疗资源天朝第一！", pos_left="5%", pos_top="93%"),\
+                             legend_opts=opts.LegendOpts(pos_left='center'),
+                             yaxis_opts=opts.AxisOpts(axislabel_opts=opts.LabelOpts(formatter="{value}")),
+                             datazoom_opts=opts.DataZoomOpts()))
+        
+        return bar
+    bar_base_per_capita().render_notebook()
+    bar_base_per_capita().render('C:/Users/xuzhen/hospital_list/bar_base_shadow.html')    
+    
+
+
+# 各省区医院分布（pie-富文本）
+        
+    def pie_rich_label() -> Pie:
+        c = (
+            Pie()
+            .add(
+                "Num of Hospitals by Province",
+                [list(z) for z in zip(list_prov, list_num)],
+                radius=["40%", "55%"],
+                center=["55%", "50%"],
+                label_opts=opts.LabelOpts(
+                    position="outside",
+                    formatter="{a|{a}}{abg|}\n{hr|}\n {b|{b}: }{c}  {per|{d}%}  ",
+                    background_color="#eee",
+                    border_color="#aaa",
+                    border_width=1,
+                    border_radius=4,
+                    rich={
+                        "a": {"color": "#999", "lineHeight": 22, "align": "center"},
+                        "abg": {
+                            "backgroundColor": "#e3e3e3",
+                            "width": "100%",
+                            "align": "right",
+                            "height": 22,
+                            "borderRadius": [4, 4, 0, 0],
+                        },
+                        "hr": {
+                            "borderColor": "#aaa",
+                            "width": "100%",
+                            "borderWidth": 0.5,
+                            "height": 0,
+                        },
+                        "b": {"fontSize": 16, "lineHeight": 33},
+                        "per": {
+                            "color": "#eee",
+                            "backgroundColor": "#334455",
+                            "padding": [2, 4],
+                            "borderRadius": 2,
+                        },
+                    },
+                ),
+            )
+            .set_global_opts(title_opts=opts.TitleOpts(title="富文本同学发现：尼玛黑龙江和辽宁（医疗）底子不赖啊？以前小瞧它了！", pos_left="50%", pos_top="5%"), legend_opts=opts.LegendOpts(
+                orient="vertical", pos_left="1%", pos_top="20%"))
+        )
+        return c
+    pie_rich_label().render_notebook()
+    pie_rich_label().render('C:/Users/xuzhen/hospital_list/pie_rich_label_num_hospital_by_province.html')       
+
+# 各省区医院分布（pie-玫瑰图）
+    def pie_rosetype() -> Pie:
+        v = list_prov
+        c = (
+            Pie()
+            .add(
+                "Num of Tier3 Hospitals by Province",
+                [list(z) for z in zip(v, list_num)],
+                radius=["25%", "70%"],
+                center=["25%", "50%"],
+                rosetype="radius",
+                label_opts=opts.LabelOpts(is_show=True),
+            )
+            .add(
+                "",
+                [list(z) for z in zip(v, list_ppl)],
+                radius=["25%", "70%"],
+                center=["75%", "50%"],
+                rosetype="area",
+            )
+            .set_global_opts(title_opts=opts.TitleOpts(title="玫瑰：老伴儿，咱退休后是到三甲医院最多还是/人均医院最多的地方退休呢？你看我最近刷代码刷的手指都废了"), legend_opts=opts.LegendOpts(
+                orient="vertical", pos_left="1%", pos_top="90%"))
+        )
+        return c
+    pie_rosetype().render_notebook()
+    pie_rosetype().render('C:/Users/xuzhen/hospital_list/pie_rosetype_num_hospital_by_province.html')    
+# 各省区医院分布（pie-legent滚动图）
+
+    def pie_scroll_legend() -> Pie:
+        c = (
+            Pie()
+            .add(
+                "",
+                [
+                    list(z)
+                    for z in zip(
+                        list_prov,
+                        list_num,
+                    )
+                ],
+                center=["40%", "50%"],
+            )
+            .set_global_opts(
+                title_opts=opts.TitleOpts(title="湖北：格老子的，你敢瞧不起额的医疗资源？！老子有88家三甲医院全国前三好不好？"),
+                legend_opts=opts.LegendOpts(
+                    type_="scroll", pos_left="80%", orient="vertical"
+                ),
+            )
+            .set_series_opts(label_opts=opts.LabelOpts(formatter="{b}: {c}"))
+        )
+        return c
+    pie_scroll_legend().render_notebook()
+    pie_scroll_legend().render('C:/Users/xuzhen/hospital_list/pie_scroll_legend_num_hospital_by_province.html')    
+
+    tab = Tab()
+    tab.add(geo_base(), "Geo地理坐标图")
+    tab.add(geo_heat(), "Geo地理坐标热力图")
+    tab.add(word_wc(), "词云图")
+    tab.add(amap(), "MAP区域图")
+    tab.add(pictorialbar_custom_symbol(), 'pictorialbar图')
+    tab.add(overlap_bar_line(), "柱状图")
+    tab.add(bmap_heatmap(),"百度热力图")
+    tab.add(bar_base(),'基本柱状图')
+    tab.add(bar_base_per_capita(),"人均医疗资源图")
+    tab.add(pie_rich_label(),"富文本图")
+    tab.add(pie_rosetype(), "玫瑰图")
+    tab.add(pie_scroll_legend(),"滑动柱状图")
+    tab.render('C:/Users/xuzhen/hospital_list/final_tab_hospital.html')
+
+    
+#定义省区数据
+def province(df):
+    import china_region
+    population = pd.read_csv('C:/Users/xuzhen/population_china.csv',encoding='utf_8_sig')
+# pd.merge 要求dataframe不能有空格等  
+    for j in range(0, len(population)):
+        s = str(population['地区'][j])
+        population['地区'][j] = re.sub('\s+', '', s).strip()
+    print(type(population))
+#    print(population)
+    df.to_csv('new_table_city_inspect.csv',encoding='utf_8_sig')
+    #定义每个城市省份上市公司的个数并降序排列  
+# 很有用的groupby:    
+#    print(df.groupby(["provinces", "cities"], as_index=False)['hospital'].count())
+    for k in range(0, len(df)):
+        
+        if df['provinces'][k] in ['北京市','上海市','天津市','重庆市']:
+            df['cities'][k] = df['provinces'][k]
+    df_count_c = df.groupby(["provinces", "cities"]).size().reset_index(name='count_c').sort_values(by='count_c', ascending=False)
+    print('grouped by city - count:')
+    print(df_count_c.head(20),'\n')
+    
+    df_count_p = df.groupby(["provinces"]).size().reset_index(name='count_p').sort_values(by='count_p', ascending=False)
+    for p in range(0, len(df_count_p)):
+        if df_count_p['provinces'][p] not in ['黑龙江省', '内蒙古自治区']:
+            df_count_p['provinces'][p] = df_count_p['provinces'][p][0:2].strip()
+        else:
+            df_count_p['provinces'][p] = df_count_p['provinces'][p][0:3].strip()
+#     print('grouped by province - count:')    
+#     print(df_count_p.head(999),'\n')
+# 合并人口和医院统计数据    
+    merged_data = pd.merge(population, df_count_p, left_on="地区", right_on="provinces", how="inner")
+    merged_data['ppl_per_hospital'] = ( merged_data['人口'] / merged_data['count_p']).astype(int)
+    print('merged population with hospital count - ppl_per_hospital Asc:')
+    print(merged_data.sort_values(by='ppl_per_hospital', ascending=True))
+    print('merged population with hospital count - count_p Desc:')      
+    print(merged_data.sort_values(by='count_p', ascending=False))    
+#     print('print df: \n',df)
+#     df_p = pd.DataFrame[df['provinces'], df['df_count_p']]
+#     print(df_p)
+
+
+    
+    
+    return df,merged_data, df_count_p,df_count_c 
+    
+        
+if __name__ == '__main__':
+    start = time.time()
+    db =  'hospital_list'
+    hospital, provinces, cities, address, phone = read_mysql(db)
+#     geoloc = []
+#     for i in range(0,len(location)):
+#         geoloc.append(__get_location1__(hospital[i], provinces[i], cities[i], location[i],address[i], phone[i]))
+#     print(geoloc)
+    df_hospital_coord = pd.DataFrame(geoloc)
+#hospital, provinces, cities, lat, lng, address, phone    
+    df_hospital_coord.columns = ['hospital', 'provinces', 'cities', 'lat', 'lng', 'address', 'phone']
+#    write_to_sql(df_hospital_coord, db = db)
+    print('number of address validated: {}'.format(len(geoloc)))
+    df, merged_data, df_count_p, df_count_c = province(df_hospital_coord)
+    geo_charts(df_hospital_coord)
+    end = time.time()
+    print("数据处理耗时{}秒".format(end - start))
+#     print("数据处理耗时{}秒".format(dp - start))
+#     print("图片渲染耗时{}秒".format(end - dp))
